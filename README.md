@@ -136,7 +136,7 @@ esptool.py --chip esp32s3 \
 
 ### 开通灵隼物联网服务并创建产品
 
-详见《开通声网灵隼服务》。
+详见《开通声网灵隼服务》,官方文档(https://docs-preprod.agora.io/cn/iot-apaas/enable_agora_link)。
 
 ### 获取 License
 
