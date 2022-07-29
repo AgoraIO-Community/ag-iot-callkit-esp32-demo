@@ -158,7 +158,7 @@ static camera_config_t camera_config = {
     .jpeg_quality = 12, // 0-63 lower number means higher quality
     .fb_count     = 2, // if more than one, i2s runs in continuous mode. Use only with JPEG
     .grab_mode    = CAMERA_GRAB_WHEN_EMPTY,
-    // .conv_mode    = YUV422_TO_YUV420,
+    .conv_mode    = YUV422_TO_YUV420,
 };
 
 static char g_device_id[32] = { 0 };
@@ -172,6 +172,13 @@ static audio_element_handle_t raw_read, raw_write, element_algo;
 static audio_pipeline_handle_t recorder, player;
 static SemaphoreHandle_t g_video_capture_sem  = NULL;
 static SemaphoreHandle_t g_audio_capture_sem  = NULL;
+
+static esp_lcd_panel_handle_t g_panel_handle;
+
+static void init_lcd_service(esp_periph_set_handle_t set)
+{
+  g_panel_handle = audio_board_lcd_init(set, NULL);//lcd_trans_done_cb
+}
 
 static esp_err_t es7210_write_reg(i2c_bus_handle_t i2c_handle, uint8_t reg_addr, uint8_t data)
 {
@@ -262,12 +269,8 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
     return ESP_OK;
 }
 
-static void start_key_service(void)
+static void start_key_service(esp_periph_set_handle_t set)
 {
-    ESP_LOGI(TAG, "Initialize peripherals");
-    esp_periph_config_t periph_cfg = DEFAULT_ESP_PERIPH_SET_CONFIG();
-    esp_periph_set_handle_t set = esp_periph_set_init(&periph_cfg);
-
     ESP_LOGI(TAG, "Initialize Button peripheral with board init");
     audio_board_key_init(set);
 
@@ -373,7 +376,7 @@ static esp_err_t recorder_pipeline_open()
 #ifdef CONFIG_ESP_LYRAT_MINI_V1_1_BOARD
     i2s_cfg.i2s_port  = 1;
 #endif
-    i2s_cfg.task_core = 1;
+    // i2s_cfg.task_core = 1;
     i2s_cfg.i2s_config.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;
     i2s_cfg.i2s_config.sample_rate    = I2S_SAMPLE_RATE;
     i2s_cfg.i2s_config.mode           = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_RX);
@@ -395,7 +398,7 @@ static esp_err_t recorder_pipeline_open()
 #endif
     // algo_config.task_core = 1;
     algo_config.task_stack = 4 * 1024;
-    algo_config.algo_mask = ALGORITHM_STREAM_USE_AEC;
+    algo_config.algo_mask = ALGORITHM_STREAM_USE_AEC | ALGORITHM_STREAM_USE_NS;
 
     element_algo = algo_stream_init(&algo_config);
     audio_element_set_music_info(element_algo, I2S_SAMPLE_RATE, 1, I2S_BITS);
@@ -459,7 +462,7 @@ static void setup_audio(void)
 {
     audio_board_handle_t board_handle = audio_board_init();
     audio_hal_ctrl_codec(board_handle->audio_hal, AUDIO_HAL_CODEC_MODE_BOTH, AUDIO_HAL_CTRL_START);
-    audio_hal_set_volume(board_handle->audio_hal, 75);
+    audio_hal_set_volume(board_handle->audio_hal, 60);
 
     es7210_mic_select(ES7210_INPUT_MIC1 | ES7210_INPUT_MIC2 | ES7210_INPUT_MIC3 | ES7210_INPUT_MIC4);
     set_es7210_tdm_mode();
@@ -482,8 +485,8 @@ static void *init_jpeg_encoder(int quality, int hfm_core, int hfm_priority, jpeg
     jpeg_enc_info_t jpeg_enc_info = { 0 };
     jpeg_enc_info.width       = CAMERA_WIDTH;
     jpeg_enc_info.height      = CAMERA_HIGH;
-    // jpeg_enc_info.src_type    = JPEG_RAW_TYPE_YCbY2YCrY2;  //conv_mode = YUV422_TO_YUV420 
-    jpeg_enc_info.src_type    = JPEG_RAW_TYPE_YCbYCr;
+    jpeg_enc_info.src_type    = JPEG_RAW_TYPE_YCbY2YCrY2;  //conv_mode = YUV422_TO_YUV420 
+    // jpeg_enc_info.src_type    = JPEG_RAW_TYPE_YCbYCr;
     jpeg_enc_info.subsampling = subsampling;
     jpeg_enc_info.quality     = quality;
     // jpeg_enc_info.task_enable = true;
@@ -575,6 +578,7 @@ static void video_capture_and_send_task(void *args)
             send_video_frame(image_buf, image_len);
 
             esp_camera_fb_return(pic);
+            usleep(30 * 1000);
         }
     }
 
@@ -617,7 +621,13 @@ static void audio_capture_and_send_task(void *threadid)
             send_audio_frame(pcm_buf, DEFAULT_PCM_CAPTURE_LEN);
         }
     }
+
+    audio_pipeline_stop(recorder);
+    audio_pipeline_wait_for_stop(recorder);
     audio_pipeline_terminate(recorder);
+
+    audio_pipeline_stop(player);
+    audio_pipeline_wait_for_stop(player);
     audio_pipeline_terminate(player);
 
     free(pcm_buf);
@@ -634,7 +644,7 @@ static void create_capture_task(void)
     ESP_LOGE(TAG, "Unable to create video capture semaphore!");
     return;
   }
-  rval = xTaskCreatePinnedToCore(video_capture_and_send_task, "video_task", 3 * 1024, NULL, PRIO_TASK_FETCH, NULL, 0);
+  rval = xTaskCreatePinnedToCore(video_capture_and_send_task, "video_task", 3 * 1024, NULL, PRIO_TASK_FETCH, NULL, 1);
   if (rval != pdTRUE) {
     ESP_LOGE(TAG, "Unable to create video capture thread!");
     return;
@@ -646,7 +656,7 @@ static void create_capture_task(void)
     ESP_LOGE(TAG, "Unable to create audio capture semaphore!");
     return;
   }
-  rval = xTaskCreatePinnedToCore(audio_capture_and_send_task, "audio_task", 3 * 1024, NULL, PRIO_TASK_FETCH, NULL, 0);
+  rval = xTaskCreatePinnedToCore(audio_capture_and_send_task, "audio_task", 3 * 1024, NULL, PRIO_TASK_FETCH, NULL, 1);
   if (rval != pdTRUE) {
     ESP_LOGE(TAG, "Unable to create audio capture thread!");
     return;
@@ -877,8 +887,14 @@ int app_main(void)
         return -1;
     }
 
-    // Monitor the "REC" key event
-    start_key_service();
+    ESP_LOGI(TAG, "Initialize peripherals");
+    esp_periph_config_t periph_cfg = DEFAULT_ESP_PERIPH_SET_CONFIG();
+    esp_periph_set_handle_t set = esp_periph_set_init(&periph_cfg);
+
+    // Monitor the key event
+    start_key_service(set);
+
+    // init_lcd_service(set);
 
     // Infinite loop
     while (!g_app.b_exit) {
