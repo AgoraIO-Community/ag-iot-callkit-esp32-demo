@@ -5,6 +5,8 @@
 #define CONFIG_CUSTOMER_KEY "8620fd4xxxxxxxxxxxxxd307363"
 #define CONFIG_CUSTOMER_SECRET "492c18dxxxxxxxxxxx7e802"
 
+#define CONFIG_LICENSE_PID "00F8D46F55xxxxxxxxxxx22646"
+
 // Agora Master Server URL
 #define CONFIG_MASTER_SERVER_URL "https://app.agoralink-iot-cn.sd-rtn.com"
 
@@ -43,7 +45,7 @@ rqXRfboQnoZsG4q5WTP468SQvvG5\r\n\
 -----END CERTIFICATE-----\r\n"
 
 // #define CONFIG_AUDIO_ONLY
-//#define CONFIG_AUDIO_SAMPLE_RATE_8K
+#define CONFIG_AUDIO_SAMPLE_RATE_8K
 #define CONFIG_SEND_PCM_DATA
 #define CONFIG_ENABLE_RUN_TIME_STATS
 

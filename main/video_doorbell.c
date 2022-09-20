@@ -53,6 +53,7 @@
 #include "raw_stream.h"
 #include "esp32s3/clk.h"
 #include "esp_sleep.h"
+#include "audio_thread.h"
 
 #define DEFAULT_LISTEN_INTERVAL CONFIG_EXAMPLE_WIFI_LISTEN_INTERVAL
 
@@ -89,17 +90,17 @@
 
 #define PRIO_TASK_FETCH (21)
 
-#define DEFAULT_PCM_CAPTURE_LEN (2048)
-
 #ifdef CONFIG_AUDIO_SAMPLE_RATE_8K
 #define I2S_SAMPLE_RATE 8000
+#define DEFAULT_PCM_CAPTURE_LEN (320)
 #else
 #define I2S_SAMPLE_RATE 16000
+#define DEFAULT_PCM_CAPTURE_LEN (640)
 #endif
 #define I2S_CHANNELS 1
 #define I2S_BITS 16
 
-#define ESP_READ_BUFFER_SIZE 1024
+#define ESP_READ_BUFFER_SIZE 320
 
 #define DEFAULT_MAX_BITRATE (2000000)
 
@@ -172,6 +173,7 @@ static audio_element_handle_t raw_read, raw_write, element_algo;
 static audio_pipeline_handle_t recorder, player;
 static SemaphoreHandle_t g_video_capture_sem  = NULL;
 static SemaphoreHandle_t g_audio_capture_sem  = NULL;
+static uint8_t g_push_type = 0x00;
 
 static esp_lcd_panel_handle_t g_panel_handle;
 
@@ -399,6 +401,7 @@ static esp_err_t recorder_pipeline_open()
     // algo_config.task_core = 1;
     algo_config.task_stack = 4 * 1024;
     algo_config.algo_mask = ALGORITHM_STREAM_USE_AEC | ALGORITHM_STREAM_USE_NS;
+    algo_config.stack_in_ext = true;
 
     element_algo = algo_stream_init(&algo_config);
     audio_element_set_music_info(element_algo, I2S_SAMPLE_RATE, 1, I2S_BITS);
@@ -508,7 +511,7 @@ static int send_video_frame(uint8_t *data, uint32_t len)
     ago_frame.is_key_frame      = true;
     ago_frame.video_buffer      = data;
     ago_frame.video_buffer_size = len;
-    rval = agora_iot_push_video_frame(g_handle, &ago_frame);
+    rval = agora_iot_push_video_frame(g_handle, &ago_frame, g_push_type);
     if (rval < 0) {
         ESP_LOGE(TAG, "Failed to push video frame");
         return -1;
@@ -526,7 +529,7 @@ static int send_audio_frame(uint8_t *data, uint32_t len)
     ago_frame.data_type         = AGO_AUDIO_DATA_TYPE_PCM;
     ago_frame.audio_buffer      = data;
     ago_frame.audio_buffer_size = len;
-    rval = agora_iot_push_audio_frame(g_handle, &ago_frame);
+    rval = agora_iot_push_audio_frame(g_handle, &ago_frame, g_push_type);
     if (rval < 0) {
         ESP_LOGE(TAG, "Failed to push audio frame");
         return -1;
@@ -675,10 +678,13 @@ static void iot_cb_call_request(const char *peer_name, const char *attach_msg)
     agora_iot_answer(g_handle);
 }
 
-static void iot_cb_start_push_frame(void)
+static void iot_cb_start_push_frame(uint8_t push_type)
 {
     ESP_LOGI(TAG, "Start push audio/video frames");
     g_app.b_call_session_started = true;
+
+    // record push type
+    g_push_type |= push_type;
 
 #ifndef CONFIG_AUDIO_ONLY
     xSemaphoreGive(g_video_capture_sem);
@@ -686,10 +692,15 @@ static void iot_cb_start_push_frame(void)
     xSemaphoreGive(g_audio_capture_sem);
 }
 
-static void iot_cb_stop_push_frame(void)
+static void iot_cb_stop_push_frame(uint8_t push_type)
 {
     ESP_LOGI(TAG, "Stop push audio/video frames");
     g_app.b_call_session_started = false;
+
+    xSemaphoreGive(g_service_sem);
+
+    // record push type
+    g_push_type &= ~push_type;
 }
 
 static void iot_cb_call_hung_up(const char *peer_name)
@@ -809,22 +820,11 @@ int app_main(void)
 
     char *cert        = NULL;
   // 1. activate license
-#ifdef CONFIG_LICENSE
     if (0 != agora_iot_license_activate(CONFIG_AGORA_APP_ID, CONFIG_CUSTOMER_KEY, CONFIG_CUSTOMER_SECRET,
-                                        CONFIG_PRODUCT_KEY, get_device_id(), &cert)) {
+                                        CONFIG_PRODUCT_KEY, get_device_id(), CONFIG_LICENSE_PID, &cert)) {
         ESP_LOGE(TAG, "cannot activate agora license !\n");
         return -1;
     }
-#else
-#define CERT_TEST_BUF_LEN   1024
-    cert = (char *)malloc(CERT_TEST_BUF_LEN);
-    if (NULL == cert) {
-        ESP_LOGE(TAG, "cannot malloc buffer for license !\n");
-        return -1;
-    }
-    memset(cert, 0, CERT_TEST_BUF_LEN);
-    strncpy(cert, certificate_for_test, CERT_TEST_BUF_LEN);
-#endif
 
     // Initialize Agora IoT SDK
     agora_iot_device_info_t device_info = { 0 };
