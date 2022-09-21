@@ -262,6 +262,10 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
             ESP_LOGW(TAG, "Now exiting the app...");
             g_app.b_exit = true;
             break;
+        case INPUT_KEY_USER_ID_SET:{
+            esp_err_t ret = nvs_flash_erase_partition("nvs");
+            ESP_LOGW(TAG, "Erase the nvs flash %d...", ret);
+        } break;
         default:
             ESP_LOGE(TAG, "User Key ID[%d] does not support", (int)evt->data);
             break;
@@ -288,6 +292,7 @@ static void start_key_service(esp_periph_set_handle_t set)
     periph_service_set_callback(input_ser, input_key_service_cb, NULL);
 }
 
+#ifndef CONFIG_BLUFI_ENABLE
 static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
@@ -334,6 +339,7 @@ static void setup_wifi(void)
     esp_wifi_set_ps(WIFI_PS_NONE);
 #endif
 }
+#endif
 
 static esp_err_t i2s_data_divided(int16_t *raw_buff, int len, int16_t *buf_aec)
 {
@@ -805,16 +811,22 @@ int app_main(void)
 #endif //SOC_GPIO_SUPPORT_DEEPSLEEP_WAKEUP
 #endif
 
-    setup_wifi();
-
     setup_audio();
 
     create_capture_task();
+
+#ifdef CONFIG_BLUFI_ENABLE
+    // setup wifi and Wait until WiFi is connected
+extern void setup_wifi_with_block(void);
+    setup_wifi_with_block();
+#else
+    setup_wifi();
 
     // Wait until WiFi is connected
     while (!g_app.b_wifi_connected) {
         vTaskDelay(10 / portTICK_PERIOD_MS);
     }
+#endif
 
     ESP_LOGI(TAG, "device_id: %s, cpu_freq: %d", get_device_id(), esp_clk_cpu_freq() / MHZ);
 
@@ -845,7 +857,8 @@ int app_main(void)
         .enable_rtc  = true,
         .certificate = cert,
         .enable_recv_audio = true,
-        .enable_recv_video = false,
+        .enable_recv_video = false, //recv video buffer
+        .area_code         = AGO_AREA_CODE_GLOB,
         .rtc_cb = {
         .cb_start_push_frame    = iot_cb_start_push_frame,
         .cb_stop_push_frame     = iot_cb_stop_push_frame,
@@ -880,6 +893,7 @@ int app_main(void)
         .cb_call_peer_timeout  = iot_cb_call_timeout,
         },
     };
+    ESP_LOGE(TAG, "agora_iot_init: codec type %d, sample rate %d", cfg.audio_config.audio_codec_type, cfg.audio_config.pcm_sample_rate);
     g_handle = agora_iot_init(&cfg);
     if (!g_handle) {
         // if failed to initialize, no need to deinitialize

@@ -49,7 +49,7 @@ rqXRfboQnoZsG4q5WTP468SQvvG5\r\n\
 #define CONFIG_SEND_PCM_DATA
 #define CONFIG_ENABLE_RUN_TIME_STATS
 
-// #define LOW_POWER_MODE    (1)
+#define CONFIG_BLUFI_ENABLE
 
 #if (LOW_POWER_MODE == 1)
 // 1 for light sleep
