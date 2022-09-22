@@ -451,10 +451,4 @@ void setup_wifi_with_block(void)
   // disable blufi
   esp_bt_controller_disable();
   esp_bt_controller_deinit();
-
-#if LOWER_POWER_MODE == CONFIG_ENABLE_LIGHT_SLEEP
-  esp_wifi_set_ps(DEFAULT_PS_MODE);
-#else
-  esp_wifi_set_ps(WIFI_PS_NONE);
-#endif
 }

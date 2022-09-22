@@ -703,8 +703,6 @@ static void iot_cb_stop_push_frame(uint8_t push_type)
     ESP_LOGI(TAG, "Stop push audio/video frames");
     g_app.b_call_session_started = false;
 
-    xSemaphoreGive(g_service_sem);
-
     // record push type
     g_push_type &= ~push_type;
 }
@@ -819,6 +817,12 @@ int app_main(void)
     // setup wifi and Wait until WiFi is connected
 extern void setup_wifi_with_block(void);
     setup_wifi_with_block();
+
+#if LOWER_POWER_MODE == CONFIG_ENABLE_LIGHT_SLEEP
+    esp_wifi_set_ps(DEFAULT_PS_MODE);
+#else
+    esp_wifi_set_ps(WIFI_PS_NONE);
+#endif
 #else
     setup_wifi();
 
