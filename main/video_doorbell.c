@@ -53,6 +53,7 @@
 #include "raw_stream.h"
 #include "esp32s3/clk.h"
 #include "esp_sleep.h"
+#include "driver/rtc_io.h"
 #include "audio_thread.h"
 
 #define DEFAULT_LISTEN_INTERVAL CONFIG_EXAMPLE_WIFI_LISTEN_INTERVAL
@@ -333,7 +334,7 @@ static void setup_wifi(void)
     ESP_ERROR_CHECK(esp_wifi_start());
 
     ESP_LOGI(TAG, "esp_wifi_set_ps().");
-#ifdef CONFIG_ENABLE_LIGHT_SLEEP
+#if (LOWER_POWER_MODE == CONFIG_ENABLE_LIGHT_SLEEP)
     esp_wifi_set_ps(DEFAULT_PS_MODE);
 #else
     esp_wifi_set_ps(WIFI_PS_NONE);
@@ -740,44 +741,61 @@ static void iot_cb_receive_audio_frame(ago_audio_frame_t *frame)
     raw_stream_write(raw_write, (char *)frame->audio_buffer, frame->audio_buffer_size);
 }
 
+#if (LOWER_POWER_MODE == CONFIG_ENABLE_DEEP_SLEEP)
+#define CONFIG_ENTER_DEEPSLEEP_THRESHOLD 20
+
+#define CONFIG_EXAMPLE_EXT0_WAKEUP    1
+#define ESP_EXT0_WAKEUP_LEVEL_LOW 0
+#define ESP_EXT0_WAKEUP_LEVEL_HIGH 1
+
+static uint8_t g_idle_loop_count = 0;
+static int wakeup_ext = 0;
+
 static RTC_DATA_ATTR struct timeval sleep_enter_time;
 static void handle_wakeup_cause(void)
 {
-#ifdef CONFIG_ENABLE_DEEP_SLEEP
     struct timeval now;
     gettimeofday(&now, NULL);
     int sleep_time_ms = (now.tv_sec - sleep_enter_time.tv_sec) * 1000 + (now.tv_usec - sleep_enter_time.tv_usec) / 1000;
 
     switch (esp_sleep_get_wakeup_cause()) {
-#if SOC_GPIO_SUPPORT_DEEPSLEEP_WAKEUP
-        case ESP_SLEEP_WAKEUP_GPIO: {
-            uint64_t wakeup_pin_mask = esp_sleep_get_gpio_wakeup_status();
-            if (wakeup_pin_mask != 0) {
-                int pin = __builtin_ffsll(wakeup_pin_mask) - 1;
-                printf("Wake up from GPIO %d\n", pin);
-            } else {
-                printf("Wake up from GPIO\n");
-            }
+#if CONFIG_EXAMPLE_EXT0_WAKEUP
+        case ESP_SLEEP_WAKEUP_EXT0: {
+            printf("[%d] Wake up from ext0\n", xTaskGetTickCount());
+            wakeup_ext = 1;
             break;
         }
-#endif //SOC_GPIO_SUPPORT_DEEPSLEEP_WAKEUP
+#endif // CONFIG_EXAMPLE_EXT0_WAKEUP
         case ESP_SLEEP_WAKEUP_TIMER: {
             printf("Wake up from timer. Time spent in deep sleep: %dms\n", sleep_time_ms);
             break;
         }
-#ifdef CONFIG_EXAMPLE_TOUCH_WAKEUP
-        case ESP_SLEEP_WAKEUP_TOUCHPAD: {
-            printf("Wake up from touch on pad %d\n", esp_sleep_get_touchpad_wakeup_status());
-            break;
-        }
-#endif // CONFIG_EXAMPLE_TOUCH_WAKEUP
         case ESP_SLEEP_WAKEUP_UNDEFINED:
         default:
-            printf("Not a deep sleep reset\n");
+            printf("[%d] Not a deep sleep reset %d\n", xTaskGetTickCount(), esp_sleep_get_wakeup_cause());
             break;
     }
-#endif
 }
+
+static void deep_sleep_set_and_start(void)
+{
+#ifdef CONFIG_EXAMPLE_EXT0_WAKEUP
+    const int ext_wakeup_pin_0 = GPIO_NUM_5;
+    ESP_ERROR_CHECK(rtc_gpio_init(ext_wakeup_pin_0));
+    ESP_ERROR_CHECK(esp_sleep_enable_ext0_wakeup(ext_wakeup_pin_0, ESP_EXT0_WAKEUP_LEVEL_LOW));
+    ESP_LOGW(TAG, "Enabling ext0 wakeup on pins GPIO%d\n", ext_wakeup_pin_0);  
+    ESP_ERROR_CHECK(gpio_pullup_en(ext_wakeup_pin_0));
+    ESP_ERROR_CHECK(gpio_pulldown_dis(ext_wakeup_pin_0));  
+#endif // CONFIG_EXAMPLE_EXT0_WAKEUP
+
+    gettimeofday(&sleep_enter_time, NULL);
+    // esp_sleep_enable_timer_wakeup(20000000);
+
+    printf("Entering deep sleep\r\n");
+    esp_deep_sleep_start();
+}
+#endif
+
 
 int app_main(void)
 {
@@ -789,27 +807,14 @@ int app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
-    handle_wakeup_cause();
-
-#ifdef CONFIG_ENABLE_LIGHT_SLEEP
+#if (LOWER_POWER_MODE == CONFIG_ENABLE_LIGHT_SLEEP)
     esp_pm_config_esp32s3_t pm_config = { .max_freq_mhz = CONFIG_EXAMPLE_MAX_CPU_FREQ_MHZ,
                                           .min_freq_mhz = CONFIG_EXAMPLE_MIN_CPU_FREQ_MHZ,
                                           .light_sleep_enable = true };
     ESP_ERROR_CHECK(esp_pm_configure(&pm_config));
-#endif
-
-#ifdef CONFIG_ENABLE_DEEP_SLEEP
-#if SOC_GPIO_SUPPORT_DEEPSLEEP_WAKEUP
-    const gpio_config_t config = {
-        // .pin_bit_mask = ((1ULL << 2) | (1ULL << 4))
-        .pin_bit_mask = BIT(DEFAULT_WAKEUP_PIN),
-        .mode = GPIO_MODE_INPUT,
-    };
-    ESP_ERROR_CHECK(gpio_config(&config));
-    ESP_ERROR_CHECK(esp_deep_sleep_enable_gpio_wakeup(BIT(DEFAULT_WAKEUP_PIN), DEFAULT_WAKEUP_LEVEL));
-    // ESP_ERROR_CHECK(esp_deep_sleep_enable_gpio_wakeup(((1ULL << 2) | (1ULL << 4)) , ESP_GPIO_WAKEUP_GPIO_HIGH));
-    printf("Enabling GPIO wakeup on pins GPIO%d\n", DEFAULT_WAKEUP_PIN);
-#endif //SOC_GPIO_SUPPORT_DEEPSLEEP_WAKEUP
+#elif (LOWER_POWER_MODE == CONFIG_ENABLE_DEEP_SLEEP)
+    /* deep sleep mode */
+    handle_wakeup_cause();
 #endif
 
     setup_audio();
@@ -821,7 +826,7 @@ int app_main(void)
 extern void setup_wifi_with_block(void);
     setup_wifi_with_block();
 
-#if LOWER_POWER_MODE == CONFIG_ENABLE_LIGHT_SLEEP
+#if (LOWER_POWER_MODE == CONFIG_ENABLE_LIGHT_SLEEP)
     esp_wifi_set_ps(DEFAULT_PS_MODE);
 #else
     esp_wifi_set_ps(WIFI_PS_NONE);
@@ -924,16 +929,19 @@ extern void setup_wifi_with_block(void);
             ESP_LOGW(TAG, "Please press [REC] key to ring the doorbell ...");
         } else {
             ESP_LOGW(TAG, "Now we're in the call. Please press [VOL+] key to hang up ...");
+        #if (LOWER_POWER_MODE == CONFIG_ENABLE_DEEP_SLEEP)
+            g_idle_loop_count = 0;
+        #endif
         }
         vTaskDelay(5000 / portTICK_PERIOD_MS);
 
-#ifdef CONFIG_ENABLE_DEEP_SLEEP
-        printf("Entering deep sleep\n");
-        gettimeofday(&sleep_enter_time, NULL);
+    #if (LOWER_POWER_MODE == CONFIG_ENABLE_DEEP_SLEEP)
+        if (g_idle_loop_count++ < CONFIG_ENTER_DEEPSLEEP_THRESHOLD) {
+            continue;
+        }
 
-        esp_sleep_enable_timer_wakeup(20000000);
-        esp_deep_sleep_start();
-#endif
+        deep_sleep_set_and_start();
+    #endif
     }
 
     // Deinit Agora IoT SDK

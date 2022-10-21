@@ -49,18 +49,7 @@ rqXRfboQnoZsG4q5WTP468SQvvG5\r\n\
 #define CONFIG_SEND_PCM_DATA
 #define CONFIG_ENABLE_RUN_TIME_STATS
 
-#define CONFIG_BLUFI_ENABLE
-
-#if (LOW_POWER_MODE == 1)
-// 1 for light sleep
-#define CONFIG_ENABLE_LIGHT_SLEEP
-#elif (LOW_POWER_MODE == 2)
-// 2 for deep sleep
-#define CONFIG_ENABLE_DEEP_SLEEP
-#else
-// normal mode
-#endif
-
+// #define CONFIG_BLUFI_ENABLE
 
 #define FRAMESIZE (1) // 0 for QVGA and 1 for HVGA, 2 for VGA
 
@@ -77,3 +66,12 @@ rqXRfboQnoZsG4q5WTP468SQvvG5\r\n\
 #define CONFIG_FRAME_WIDTH 640
 #define CONFIG_FRAME_HIGH 480
 #endif
+
+// 0 for no sleep
+#define CONFIG_NO_SLEEP             0
+// 1 for light sleep
+#define CONFIG_ENABLE_LIGHT_SLEEP   1
+// 2 for deep sleep
+#define CONFIG_ENABLE_DEEP_SLEEP    2
+
+#define LOWER_POWER_MODE   (CONFIG_ENABLE_DEEP_SLEEP)
